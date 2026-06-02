@@ -1,0 +1,6 @@
+{
+  "name": "Altın Sertifikası ve BIST Takip",
+  "description": "Darphane Altın Sertifikası (ALTIN.S1) ve Borsa İstanbul canlı fiyat verileri, interaktif teknik grafikler ve Yapay Zeka Yatırım Analisti.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
