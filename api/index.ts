@@ -675,6 +675,14 @@ interface StoredUser {
   createdAt: string;
 }
 
+interface PasswordResetRequest {
+  id: string;
+  email: string;
+  option: "send_old" | "reset";
+  status: "pending" | "approved" | "rejected";
+  createdAt: string;
+}
+
 function getGhToken(): string {
   const token = process.env.GH_TOKEN;
   if (!token) throw new Error("GH_TOKEN environment variable is not set");
@@ -735,6 +743,55 @@ async function writeUsers(users: StoredUser[]): Promise<boolean> {
       body: JSON.stringify(body),
     }
   );
+
+  return putRes.ok;
+}
+
+async function readPasswordResets(): Promise<PasswordResetRequest[]> {
+  try {
+    const token = process.env.GH_TOKEN;
+    const url = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/data/password-resets.json`;
+    const headers: Record<string, string> = {
+      Accept: "application/vnd.github.v3.raw",
+    };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const res = await fetch(url, { headers });
+    if (!res.ok) return [];
+    const text = await res.text();
+    if (!text || text.trim() === "") return [];
+    return JSON.parse(text);
+  } catch {
+    return [];
+  }
+}
+
+async function writePasswordResets(requests: PasswordResetRequest[]): Promise<boolean> {
+  const token = getGhToken();
+  const content = Buffer.from(JSON.stringify(requests, null, 2)).toString("base64");
+  const url = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/data/password-resets.json`;
+
+  const getRes = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github.v3+json" }
+  });
+  const currentFile = getRes.ok ? await getRes.json() : null;
+  const sha = currentFile?.sha;
+
+  const body: any = {
+    message: "password-resets.json güncellendi [AI Studio]",
+    content,
+    branch: GH_BRANCH,
+  };
+  if (sha) body.sha = sha;
+
+  const putRes = await fetch(url, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github.v3+json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
 
   return putRes.ok;
 }
@@ -816,27 +873,26 @@ app.post("/api/auth/forgot-password", async (req: Request, res: Response) => {
       return;
     }
 
-    // In a real app, you'd send actual emails. Here we simulate the response.
-    if (option === "send_old") {
-      res.json({
-        success: true,
-        message: `E-posta adresinize eski şifreniz gönderildi: ${user.password}`,
-      });
-    } else if (option === "reset") {
-      const newPassword = "YeniSifre" + Math.floor(Math.random() * 10000);
-      user.password = newPassword;
-      const ok = await writeUsers(users);
-      if (!ok) {
-        res.status(500).json({ error: "Şifre sıfırlanamadı." });
-        return;
-      }
-      res.json({
-        success: true,
-        message: `Yeni şifreniz e-posta adresinize gönderildi: ${newPassword}`,
-      });
-    } else {
-      res.status(400).json({ error: "Geçersiz seçenek." });
+    // Save the reset request for admin review
+    const resets = await readPasswordResets();
+    const newRequest: PasswordResetRequest = {
+      id: Math.random().toString(36).substr(2, 9),
+      email,
+      option,
+      status: "pending",
+      createdAt: new Date().toISOString(),
+    };
+    resets.push(newRequest);
+    const ok = await writePasswordResets(resets);
+    if (!ok) {
+      res.status(500).json({ error: "Talep kaydedilemedi." });
+      return;
     }
+
+    res.json({
+      success: true,
+      message: "Şifre sıfırlama talebiniz admin paneline iletilmiştir. Admininiz talebinizi manuel olarak değerlendirecektir.",
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message || "İşlem sırasında hata oluştu." });
   }
@@ -918,6 +974,105 @@ app.post("/api/admin/users/delete", async (req: Request, res: Response) => {
     res.json({ success: true, message: "Kullanıcı silindi." });
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Silme sırasında hata oluştu." });
+  }
+});
+
+// ─── Admin Password Reset Endpoints ─────────────────────────────────────────
+
+app.post("/api/admin/password-resets", async (req: Request, res: Response) => {
+  try {
+    if (!isAdmin(req)) {
+      res.status(401).json({ error: "Yetkisiz erişim." });
+      return;
+    }
+    const requests = await readPasswordResets();
+    res.json({ success: true, requests });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Talepler alınamadı." });
+  }
+});
+
+app.post("/api/admin/password-resets/approve", async (req: Request, res: Response) => {
+  try {
+    if (!isAdmin(req)) {
+      res.status(401).json({ error: "Yetkisiz erişim." });
+      return;
+    }
+    const { requestId } = req.body;
+    if (!requestId) {
+      res.status(400).json({ error: "Talep ID gereklidir." });
+      return;
+    }
+
+    const requests = await readPasswordResets();
+    const reqIdx = requests.findIndex((r) => r.id === requestId);
+    if (reqIdx === -1) {
+      res.status(404).json({ error: "Talep bulunamadı." });
+      return;
+    }
+
+    const resetReq = requests[reqIdx];
+    const users = await readUsers();
+    const userIdx = users.findIndex((u) => u.email === resetReq.email);
+    if (userIdx === -1) {
+      res.status(404).json({ error: "Kullanıcı bulunamadı." });
+      return;
+    }
+
+    let userPassword = users[userIdx].password;
+
+    if (resetReq.option === "reset") {
+      const newPassword = "YeniSifre" + Math.floor(Math.random() * 10000);
+      users[userIdx].password = newPassword;
+      userPassword = newPassword;
+      const usersOk = await writeUsers(users);
+      if (!usersOk) {
+        res.status(500).json({ error: "Şifre güncellenemedi." });
+        return;
+      }
+    }
+
+    requests[reqIdx].status = "approved";
+    await writePasswordResets(requests);
+
+    res.json({
+      success: true,
+      message: resetReq.option === "send_old"
+        ? `Kullanıcının mevcut şifresi: ${userPassword}`
+        : `Yeni şifre oluşturuldu: ${userPassword}`,
+      password: userPassword,
+      email: resetReq.email,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Onaylama sırasında hata oluştu." });
+  }
+});
+
+app.post("/api/admin/password-resets/reject", async (req: Request, res: Response) => {
+  try {
+    if (!isAdmin(req)) {
+      res.status(401).json({ error: "Yetkisiz erişim." });
+      return;
+    }
+    const { requestId } = req.body;
+    if (!requestId) {
+      res.status(400).json({ error: "Talep ID gereklidir." });
+      return;
+    }
+
+    const requests = await readPasswordResets();
+    const reqIdx = requests.findIndex((r) => r.id === requestId);
+    if (reqIdx === -1) {
+      res.status(404).json({ error: "Talep bulunamadı." });
+      return;
+    }
+
+    requests[reqIdx].status = "rejected";
+    await writePasswordResets(requests);
+
+    res.json({ success: true, message: "Talep reddedildi." });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Reddetme sırasında hata oluştu." });
   }
 });
 
