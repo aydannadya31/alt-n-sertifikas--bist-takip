@@ -660,6 +660,254 @@ ALTIN.S1, Darphane ve Damga Matbaası Genel Müdürlüğü tarafından ihraç ed
   }
 });
 
+// ─── GitHub Users Storage Helpers ────────────────────────────────────────────
+
+const GH_OWNER = "aydannadya31";
+const GH_REPO = "alt-n-sertifikas--bist-takip";
+const GH_PATH = "data/users.json";
+const GH_BRANCH = "main";
+const USERS_RAW_URL = `https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/${GH_BRANCH}/${GH_PATH}`;
+
+interface StoredUser {
+  id: string;
+  email: string;
+  password: string;
+  createdAt: string;
+}
+
+function getGhToken(): string {
+  const token = process.env.GH_TOKEN;
+  if (!token) throw new Error("GH_TOKEN environment variable is not set");
+  return token;
+}
+
+async function readUsers(): Promise<StoredUser[]> {
+  try {
+    const res = await fetch(USERS_RAW_URL);
+    if (!res.ok) return [];
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
+
+async function writeUsers(users: StoredUser[]): Promise<boolean> {
+  const token = getGhToken();
+  const content = Buffer.from(JSON.stringify(users, null, 2)).toString("base64");
+
+  // Get current file SHA
+  const getRes = await fetch(
+    `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_PATH}`,
+    { headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github.v3+json" } }
+  );
+  const currentFile = getRes.ok ? await getRes.json() : null;
+  const sha = currentFile?.sha;
+
+  const body: any = {
+    message: "users.json güncellendi [AI Studio]",
+    content,
+    branch: GH_BRANCH,
+  };
+  if (sha) body.sha = sha;
+
+  const putRes = await fetch(
+    `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_PATH}`,
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github.v3+json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }
+  );
+
+  return putRes.ok;
+}
+
+// ─── Auth Endpoints ──────────────────────────────────────────────────────────
+
+const ADMIN_USERNAME = "admin";
+const ADMIN_PASSWORD = "Ag1453ag!";
+
+app.post("/api/auth/register", async (req: Request, res: Response) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      res.status(400).json({ error: "E-posta ve şifre gereklidir." });
+      return;
+    }
+    const users = await readUsers();
+    if (users.find((u) => u.email === email)) {
+      res.status(409).json({ error: "Bu e-posta adresi zaten kayıtlı." });
+      return;
+    }
+    const newUser: StoredUser = {
+      id: Math.random().toString(36).substr(2, 9),
+      email,
+      password,
+      createdAt: new Date().toISOString(),
+    };
+    users.push(newUser);
+    const ok = await writeUsers(users);
+    if (!ok) {
+      res.status(500).json({ error: "Kullanıcı kaydedilemedi. GH_TOKEN ayarlandığından emin olun." });
+      return;
+    }
+    res.json({ success: true, message: "Kayıt başarılı!" });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Kayıt sırasında hata oluştu." });
+  }
+});
+
+app.post("/api/auth/login", async (req: Request, res: Response) => {
+  try {
+    const { email, password } = req.body;
+
+    // Admin login check
+    if (email === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
+      res.json({ success: true, role: "admin", user: { email: ADMIN_USERNAME } });
+      return;
+    }
+
+    if (!email || !password) {
+      res.status(400).json({ error: "E-posta ve şifre gereklidir." });
+      return;
+    }
+
+    const users = await readUsers();
+    const user = users.find((u) => u.email === email && u.password === password);
+    if (!user) {
+      res.status(401).json({ error: "E-posta veya şifre hatalı." });
+      return;
+    }
+    res.json({ success: true, role: "user", user: { email: user.email, id: user.id } });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Giriş sırasında hata oluştu." });
+  }
+});
+
+app.post("/api/auth/forgot-password", async (req: Request, res: Response) => {
+  try {
+    const { email, option } = req.body;
+    if (!email || !option) {
+      res.status(400).json({ error: "E-posta ve seçenek gereklidir." });
+      return;
+    }
+
+    const users = await readUsers();
+    const user = users.find((u) => u.email === email);
+    if (!user) {
+      res.status(404).json({ error: "Bu e-posta adresi ile kayıtlı kullanıcı bulunamadı." });
+      return;
+    }
+
+    // In a real app, you'd send actual emails. Here we simulate the response.
+    if (option === "send_old") {
+      res.json({
+        success: true,
+        message: `E-posta adresinize eski şifreniz gönderildi: ${user.password}`,
+      });
+    } else if (option === "reset") {
+      const newPassword = "YeniSifre" + Math.floor(Math.random() * 10000);
+      user.password = newPassword;
+      const ok = await writeUsers(users);
+      if (!ok) {
+        res.status(500).json({ error: "Şifre sıfırlanamadı." });
+        return;
+      }
+      res.json({
+        success: true,
+        message: `Yeni şifreniz e-posta adresinize gönderildi: ${newPassword}`,
+      });
+    } else {
+      res.status(400).json({ error: "Geçersiz seçenek." });
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "İşlem sırasında hata oluştu." });
+  }
+});
+
+// ─── Admin Endpoints ─────────────────────────────────────────────────────────
+
+function isAdmin(req: Request): boolean {
+  const { adminUser, adminPass } = req.body;
+  return adminUser === ADMIN_USERNAME && adminPass === ADMIN_PASSWORD;
+}
+
+app.get("/api/admin/users", async (req: Request, res: Response) => {
+  try {
+    if (!isAdmin(req)) {
+      res.status(401).json({ error: "Yetkisiz erişim." });
+      return;
+    }
+    const users = await readUsers();
+    res.json({ success: true, users });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Kullanıcılar alınamadı." });
+  }
+});
+
+app.post("/api/admin/users/update", async (req: Request, res: Response) => {
+  try {
+    if (!isAdmin(req)) {
+      res.status(401).json({ error: "Yetkisiz erişim." });
+      return;
+    }
+    const { userId, newEmail, newPassword } = req.body;
+    if (!userId) {
+      res.status(400).json({ error: "Kullanıcı ID gereklidir." });
+      return;
+    }
+    const users = await readUsers();
+    const idx = users.findIndex((u) => u.id === userId);
+    if (idx === -1) {
+      res.status(404).json({ error: "Kullanıcı bulunamadı." });
+      return;
+    }
+    if (newEmail) users[idx].email = newEmail;
+    if (newPassword) users[idx].password = newPassword;
+    const ok = await writeUsers(users);
+    if (!ok) {
+      res.status(500).json({ error: "Kullanıcı güncellenemedi." });
+      return;
+    }
+    res.json({ success: true, message: "Kullanıcı güncellendi." });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Güncelleme sırasında hata oluştu." });
+  }
+});
+
+app.post("/api/admin/users/delete", async (req: Request, res: Response) => {
+  try {
+    if (!isAdmin(req)) {
+      res.status(401).json({ error: "Yetkisiz erişim." });
+      return;
+    }
+    const { userId } = req.body;
+    if (!userId) {
+      res.status(400).json({ error: "Kullanıcı ID gereklidir." });
+      return;
+    }
+    let users = await readUsers();
+    const idx = users.findIndex((u) => u.id === userId);
+    if (idx === -1) {
+      res.status(404).json({ error: "Kullanıcı bulunamadı." });
+      return;
+    }
+    users.splice(idx, 1);
+    const ok = await writeUsers(users);
+    if (!ok) {
+      res.status(500).json({ error: "Kullanıcı silinemedi." });
+      return;
+    }
+    res.json({ success: true, message: "Kullanıcı silindi." });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Silme sırasında hata oluştu." });
+  }
+});
+
 // Serve static files in production
 const distPath = path.join(__dirname, "..", "dist");
 app.use(express.static(distPath));

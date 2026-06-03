@@ -21,7 +21,8 @@ import {
   Play,
   Wallet,
   Volume2,
-  VolumeX
+  VolumeX,
+  LogOut
 } from "lucide-react";
 
 import { StockInfo, HoldingItem, PriceAlert, LiveMarketResponse, HistoricalPoint } from "./types";
@@ -30,6 +31,8 @@ import GoldCard from "./components/GoldCard";
 import MarketChart from "./components/MarketChart";
 import PortfolioManager from "./components/PortfolioManager";
 import AIAssistant from "./components/AIAssistant";
+import AuthPage from "./components/AuthPage";
+import AdminPanel from "./components/AdminPanel";
 
 export default function App() {
   // Global Market Live states
@@ -79,6 +82,17 @@ export default function App() {
 
   // Navigation tab
   const [activeTab, setActiveTab] = useState<"market" | "portfolio" | "ai_advisor">("market");
+
+  // Auth state
+  const [auth, setAuth] = useState<{ role: "user" | "admin"; email: string } | null>(null);
+
+  const handleLogin = (role: "user" | "admin", email: string) => {
+    setAuth({ role, email });
+  };
+
+  const handleLogout = () => {
+    setAuth(null);
+  };
 
   // Cleanup audio timers on unmount
   useEffect(() => {
@@ -452,6 +466,15 @@ export default function App() {
                 <span className={`w-1.5 h-1.5 rounded-full ${updatingMarketData ? "bg-amber-400 animate-pulse" : "bg-slate-500"}`}></span>
                 Canlı Veri Akışı
               </span>
+              {auth && (
+                <button
+                  onClick={handleLogout}
+                  className="bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/20 text-rose-400 px-2.5 py-1 rounded-lg text-[10px] font-extrabold transition flex items-center gap-1 cursor-pointer flex-shrink-0"
+                >
+                  <LogOut className="w-3 h-3" />
+                  {auth.role === "admin" ? "Admin" : "Çıkış"}
+                </button>
+              )}
             </div>
           </div>
 
@@ -658,10 +681,18 @@ export default function App() {
         )}
 
         {activeTab === "ai_advisor" && (
-          <AIAssistant 
-            holdings={holdings} 
-            watchlist={watchlist} 
-          />
+          auth ? (
+            auth.role === "admin" ? (
+              <AdminPanel />
+            ) : (
+              <AIAssistant
+                holdings={holdings}
+                watchlist={watchlist}
+              />
+            )
+          ) : (
+            <AuthPage onLogin={handleLogin} />
+          )
         )}
 
       </main>
