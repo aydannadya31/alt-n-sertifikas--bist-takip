@@ -683,10 +683,23 @@ function getGhToken(): string {
 
 async function readUsers(): Promise<StoredUser[]> {
   try {
-    const res = await fetch(USERS_RAW_URL);
-    if (!res.ok) return [];
-    return await res.json();
-  } catch {
+    const token = process.env.GH_TOKEN;
+    const headers: Record<string, string> = {
+      Accept: "application/vnd.github.v3.raw",
+    };
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+    const res = await fetch(USERS_RAW_URL, { headers });
+    if (!res.ok) {
+      console.warn(`[readUsers] HTTP ${res.status}: ${res.statusText}`);
+      return [];
+    }
+    const text = await res.text();
+    if (!text || text.trim() === "") return [];
+    return JSON.parse(text);
+  } catch (err) {
+    console.error("[readUsers] Fetch error:", err);
     return [];
   }
 }
@@ -836,7 +849,7 @@ function isAdmin(req: Request): boolean {
   return adminUser === ADMIN_USERNAME && adminPass === ADMIN_PASSWORD;
 }
 
-app.get("/api/admin/users", async (req: Request, res: Response) => {
+app.post("/api/admin/users", async (req: Request, res: Response) => {
   try {
     if (!isAdmin(req)) {
       res.status(401).json({ error: "Yetkisiz erişim." });

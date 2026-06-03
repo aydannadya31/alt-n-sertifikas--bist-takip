@@ -25,7 +25,7 @@ export default function AdminPanel() {
     setLoading(true);
     try {
       const res = await fetch("/api/admin/users", {
-        method: "GET",
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ adminUser, adminPass }),
       });
