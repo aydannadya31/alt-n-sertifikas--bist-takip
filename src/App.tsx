@@ -94,6 +94,45 @@ export default function App() {
     setAuth(null);
   };
 
+  // ─── Auth-based data persistence (alerts/holdings/watchlist) ─────────────
+  const saveTimerRef = useRef<number | null>(null);
+
+  const loadUserData = async (email: string) => {
+    try {
+      const res = await fetch("/api/user-data/load", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json();
+      if (data.success && data.data) {
+        if (data.data.alerts?.length) setAlerts(data.data.alerts);
+        if (data.data.holdings?.length) setHoldings(data.data.holdings);
+        if (data.data.watchlist?.length) setWatchlist(data.data.watchlist);
+      }
+    } catch {}
+  };
+
+  useEffect(() => {
+    if (auth && auth.role === "user") {
+      loadUserData(auth.email);
+    }
+  }, [auth?.email]);
+
+  const debounceSaveToApi = () => {
+    if (!auth || auth.role !== "user") return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(async () => {
+      try {
+        await fetch("/api/user-data/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: auth.email, alerts, holdings, watchlist }),
+        });
+      } catch {}
+    }, 2000);
+  };
+
   // Cleanup audio timers on unmount
   useEffect(() => {
     return () => {
@@ -106,14 +145,17 @@ export default function App() {
   // Save to Storage triggers
   useEffect(() => {
     localStorage.setItem("bist_holdings", JSON.stringify(holdings));
+    debounceSaveToApi();
   }, [holdings]);
 
   useEffect(() => {
     localStorage.setItem("bist_watchlist", JSON.stringify(watchlist));
+    debounceSaveToApi();
   }, [watchlist]);
 
   useEffect(() => {
     localStorage.setItem("bist_alerts", JSON.stringify(alerts));
+    debounceSaveToApi();
   }, [alerts]);
 
   // Fetch live market ticks
@@ -588,6 +630,18 @@ export default function App() {
               {/* Price Alerts Form Area - Structured inside 4 columns on the right */}
               <div className="lg:col-span-4 space-y-6">
                 
+                {/* Auth warning for alerts */}
+                {!auth && (
+                  <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3.5 text-center">
+                    <Bell className="w-5 h-5 text-amber-400 mx-auto mb-1.5" />
+                    <p className="text-[11px] font-bold text-amber-300 mb-1">Fiyat Alarmları için Giriş Yapın</p>
+                    <p className="text-[10px] text-slate-400 leading-relaxed">
+                      Alarmlarınız cihaza değil, hesabınıza kaydedilsin. 
+                      <span className="text-amber-400 font-bold"> AI Danışmanı</span> sekmesinden ücretsiz kayıt olabilirsiniz.
+                    </p>
+                  </div>
+                )}
+
                 {/* Custom Price alert form card */}
                 <div className="glass-effect rounded-2xl p-5 shadow-xl">
                   <h3 className="text-sm font-bold text-white mb-2 flex items-center gap-1.5">
@@ -672,12 +726,24 @@ export default function App() {
         )}
 
         {activeTab === "portfolio" && marketData && (
-          <PortfolioManager
+          <>
+            {!auth && (
+              <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 text-center max-w-4xl mx-auto mb-4">
+                <Wallet className="w-6 h-6 text-amber-400 mx-auto mb-1.5" />
+                <p className="text-xs font-bold text-amber-300 mb-1">Portföy Kaydı için Giriş Yapın</p>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  Portföy bilgileriniz şu an yalnızca bu cihazda saklanıyor. Hesap oluşturursanız tüm cihazlarda erişebilirsiniz.
+                  <span className="text-amber-400 font-bold"> AI Danışmanı</span> sekmesinden kayıt olun.
+                </p>
+              </div>
+            )}
+            <PortfolioManager
             holdings={holdings}
             onAddHolding={handleAddHolding}
             onRemoveHolding={handleRemoveHolding}
             assets={marketData.assets}
           />
+          </>
         )}
 
         {activeTab === "ai_advisor" && (

@@ -1076,6 +1076,112 @@ app.post("/api/admin/password-resets/reject", async (req: Request, res: Response
   }
 });
 
+// ─── Kullanıcı Data (Alerts/Holdings/Watchlist) Endpoints ───────────────────
+
+interface UserData {
+  email: string;
+  alerts: any[];
+  holdings: any[];
+  watchlist: string[];
+}
+
+const USER_DATA_PATH = "data/user-data.json";
+const USER_DATA_URL = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${USER_DATA_PATH}`;
+
+async function readAllUserData(): Promise<UserData[]> {
+  try {
+    const token = process.env.GH_TOKEN;
+    const headers: Record<string, string> = { Accept: "application/vnd.github.v3.raw" };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const res = await fetch(USER_DATA_URL, { headers });
+    if (!res.ok) return [];
+    const text = await res.text();
+    if (!text || text.trim() === "") return [];
+    return JSON.parse(text);
+  } catch {
+    return [];
+  }
+}
+
+async function writeAllUserData(data: UserData[]): Promise<boolean> {
+  const token = getGhToken();
+  const content = Buffer.from(JSON.stringify(data, null, 2)).toString("base64");
+
+  const getRes = await fetch(USER_DATA_URL, {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github.v3+json" }
+  });
+  const currentFile = getRes.ok ? await getRes.json() : null;
+  const sha = currentFile?.sha;
+
+  const body: any = {
+    message: "user-data.json güncellendi [AI Studio]",
+    content,
+    branch: GH_BRANCH,
+  };
+  if (sha) body.sha = sha;
+
+  const putRes = await fetch(USER_DATA_URL, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github.v3+json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  return putRes.ok;
+}
+
+app.post("/api/user-data/load", async (req: Request, res: Response) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      res.status(400).json({ error: "E-posta gereklidir." });
+      return;
+    }
+    const allData = await readAllUserData();
+    const userData = allData.find((d) => d.email === email);
+    res.json({
+      success: true,
+      data: userData || { email, alerts: [], holdings: [], watchlist: [] },
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Veriler alınamadı." });
+  }
+});
+
+app.post("/api/user-data/save", async (req: Request, res: Response) => {
+  try {
+    const { email, alerts, holdings, watchlist } = req.body;
+    if (!email) {
+      res.status(400).json({ error: "E-posta gereklidir." });
+      return;
+    }
+    let allData = await readAllUserData();
+    const idx = allData.findIndex((d) => d.email === email);
+    const newData: UserData = {
+      email,
+      alerts: alerts || [],
+      holdings: holdings || [],
+      watchlist: watchlist || [],
+    };
+    if (idx >= 0) {
+      allData[idx] = newData;
+    } else {
+      allData.push(newData);
+    }
+    const ok = await writeAllUserData(allData);
+    if (!ok) {
+      res.status(500).json({ error: "Veriler kaydedilemedi." });
+      return;
+    }
+    res.json({ success: true, message: "Veriler kaydedildi." });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Kayıt sırasında hata oluştu." });
+  }
+});
+
 // Serve static files in production
 const distPath = path.join(__dirname, "..", "dist");
 app.use(express.static(distPath));
