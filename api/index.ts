@@ -666,7 +666,7 @@ const GH_OWNER = "aydannadya31";
 const GH_REPO = "alt-n-sertifikas--bist-takip";
 const GH_PATH = "data/users.json";
 const GH_BRANCH = "main";
-const USERS_RAW_URL = `https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/${GH_BRANCH}/${GH_PATH}`;
+const USERS_API_URL = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_PATH}`;
 
 interface StoredUser {
   id: string;
@@ -690,7 +690,7 @@ async function readUsers(): Promise<StoredUser[]> {
     if (token) {
       headers.Authorization = `Bearer ${token}`;
     }
-    const res = await fetch(USERS_RAW_URL, { headers });
+    const res = await fetch(USERS_API_URL, { headers });
     if (!res.ok) {
       console.warn(`[readUsers] HTTP ${res.status}: ${res.statusText}`);
       return [];
@@ -710,7 +710,7 @@ async function writeUsers(users: StoredUser[]): Promise<boolean> {
 
   // Get current file SHA
   const getRes = await fetch(
-    `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_PATH}`,
+    USERS_API_URL,
     { headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github.v3+json" } }
   );
   const currentFile = getRes.ok ? await getRes.json() : null;
@@ -724,7 +724,7 @@ async function writeUsers(users: StoredUser[]): Promise<boolean> {
   if (sha) body.sha = sha;
 
   const putRes = await fetch(
-    `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_PATH}`,
+    USERS_API_URL,
     {
       method: "PUT",
       headers: {
