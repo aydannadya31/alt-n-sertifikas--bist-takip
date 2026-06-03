@@ -25,11 +25,10 @@ import {
   LogOut
 } from "lucide-react";
 
-import { StockInfo, HoldingItem, PriceAlert, LiveMarketResponse } from "./types";
+import { StockInfo, HoldingItem, PriceAlert, LiveMarketResponse, HistoricalPoint } from "./types";
 import TickerBar from "./components/TickerBar";
 import GoldCard from "./components/GoldCard";
-import TradingViewChart from "./components/TradingViewChart";
-import TechnicalAnalysis from "./components/TechnicalAnalysis";
+import MarketChart from "./components/MarketChart";
 import PortfolioManager from "./components/PortfolioManager";
 import AIAssistant from "./components/AIAssistant";
 import AuthPage from "./components/AuthPage";
@@ -43,6 +42,11 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [marketTrend, setMarketTrend] = useState<string>("normal");
   const [updatingMarketData, setUpdatingMarketData] = useState<boolean>(false);
+
+  // Chart States
+  const [chartRange, setChartRange] = useState<"1D" | "1W" | "1M" | "1Y">("1D");
+  const [historyData, setHistoryData] = useState<HistoricalPoint[]>([]);
+  const [chartLoading, setChartLoading] = useState<boolean>(false);
 
   // Local Storage (Portfolio & Watchlist & Alerts)
   const [holdings, setHoldings] = useState<HoldingItem[]>(() => {
@@ -173,6 +177,21 @@ export default function App() {
   };
 
   // Fetch chart history when selected asset or range changes
+  const fetchHistory = async () => {
+    setChartLoading(true);
+    try {
+      const response = await fetch(`/api/market-history/${selectedSymbol}?range=${chartRange}`);
+      const data = await response.json();
+      if (data.history) {
+        setHistoryData(data.history);
+      }
+    } catch (err) {
+      console.error("Error reading financial chart history data", err);
+    } finally {
+      setChartLoading(false);
+    }
+  };
+
   // Initial fetch and polling loop (runs every 5 seconds)
   useEffect(() => {
     fetchMarketData(true);
@@ -181,6 +200,11 @@ export default function App() {
     }, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  // Update chart when selected stock changes
+  useEffect(() => {
+    fetchHistory();
+  }, [selectedSymbol, chartRange]);
 
   // Watch for symbol update and update alarm fields
   useEffect(() => {
@@ -590,24 +614,16 @@ export default function App() {
               {/* Technical Chart Screen Area - Expanded to take up 8 full columns */}
               <div className="lg:col-span-8 space-y-4">
                 {marketData?.assets[selectedSymbol] && (
-                  <>
-                    <div className="flex items-center justify-between mb-1 px-1">
-                      <div>
-                        <h3 className="text-sm font-extrabold text-white">{marketData.assets[selectedSymbol].name}</h3>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className="font-mono font-black text-lg text-white">
-                            {marketData.assets[selectedSymbol].price.toFixed(2)} TL
-                          </span>
-                          <span className={`font-mono text-xs font-bold ${
-                            marketData.assets[selectedSymbol].change >= 0 ? "text-emerald-400" : "text-rose-400"
-                          }`}>
-                            {marketData.assets[selectedSymbol].change >= 0 ? "+" : ""}{marketData.assets[selectedSymbol].change}%
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                    <TradingViewChart symbol={selectedSymbol} />
-                  </>
+                  <MarketChart
+                    symbol={selectedSymbol}
+                    name={marketData.assets[selectedSymbol].name}
+                    currentPrice={marketData.assets[selectedSymbol].price}
+                    dailyChange={marketData.assets[selectedSymbol].change}
+                    historyData={historyData}
+                    activeRange={chartRange}
+                    onRangeChange={(range) => setChartRange(range)}
+                    isLoading={chartLoading}
+                  />
                 )}
               </div>
 
@@ -705,11 +721,6 @@ export default function App() {
                 </div>
 
               </div>
-            </div>
-
-            {/* Technical Analysis Section */}
-            <div className="mt-6">
-              <TechnicalAnalysis symbol={selectedSymbol} />
             </div>
           </div>
         )}
